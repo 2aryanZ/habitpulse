@@ -16,12 +16,14 @@ import {
   scheduleDailyReminders,
   scheduleHabitReminder,
 } from '@/utils/notifications';
+import { useAuth } from '@/context/AuthContext';
+import { isSupabaseConfigured, supabase } from '@/utils/supabase';
 
-const HABITS_STORAGE_KEY = '@habit_pulse_habits_v3';
-const CHALLENGES_STORAGE_KEY = '@habit_pulse_challenges_v3';
-const LOGS_STORAGE_KEY = '@habit_pulse_logs_v3';
-const SETTINGS_STORAGE_KEY = '@habit_pulse_settings_v3';
-const ONBOARDING_STORAGE_KEY = '@habit_pulse_onboarding_v3';
+const HABITS_STORAGE_KEY = '@habit_pulse_habits_v4';
+const CHALLENGES_STORAGE_KEY = '@habit_pulse_challenges_v4';
+const LOGS_STORAGE_KEY = '@habit_pulse_logs_v4';
+const SETTINGS_STORAGE_KEY = '@habit_pulse_settings_v4';
+const ONBOARDING_STORAGE_KEY = '@habit_pulse_onboarding_v4';
 
 function getTodayString(): string {
   const now = new Date();
@@ -217,6 +219,8 @@ interface CelebrationState {
   badge?: string;
 }
 
+export type SyncStatus = 'synced' | 'syncing' | 'offline' | 'guest';
+
 interface HabitContextType {
   habits: Habit[];
   challenges: Challenge[];
@@ -228,6 +232,7 @@ interface HabitContextType {
   notificationConfig: NotificationScheduleConfig;
   celebrationState: CelebrationState;
   hasSeenOnboarding: boolean;
+  syncStatus: SyncStatus;
 
   setSelectedCategory: (cat: HabitCategory | 'all') => void;
   toggleHabit: (id: string) => void;
@@ -240,7 +245,6 @@ interface HabitContextType {
   claimChallengeReward: (challengeId: string) => void;
   addCustomChallenge: (challenge: Omit<Challenge, 'id' | 'status' | 'completedDays' | 'isCustom'>) => void;
 
-  // Developer Testing Controls
   devSetChallengeDay: (challengeId: string, day: number) => void;
   devTriggerChallengeCompletion: (challengeId: string) => void;
   devCompleteAllHabitsToday: () => void;
@@ -256,6 +260,7 @@ interface HabitContextType {
   triggerCelebration: (title: string, subtitle: string, badge?: string) => void;
   resetDemoData: () => void;
   setHasSeenOnboarding: (seen: boolean) => void;
+  syncNow: () => Promise<void>;
 
   generateConsistencyStory: () => { paragraph: string; score: string; highlight: string; weeklyRate: number };
 }
@@ -263,13 +268,16 @@ interface HabitContextType {
 const HabitContext = createContext<HabitContextType | undefined>(undefined);
 
 export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, isGuest } = useAuth();
+
   const [habits, setHabits] = useState<Habit[]>(SEED_HABITS);
   const [challenges, setChallenges] = useState<Challenge[]>(INITIAL_CHALLENGES);
   const [logs, setLogs] = useState<HabitLogEntry[]>(SEED_LOGS);
   const [selectedCategory, setSelectedCategory] = useState<HabitCategory | 'all'>('all');
   const [soundEnabled, setSoundEnabledState] = useState(true);
   const [hapticsEnabled, setHapticsEnabledState] = useState(true);
-  const [hasSeenOnboarding, setHasSeenOnboardingState] = useState(true); // default true, can be opened
+  const [hasSeenOnboarding, setHasSeenOnboardingState] = useState(true);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(isGuest ? 'guest' : 'synced');
   const [notificationConfig, setNotificationConfig] = useState<NotificationScheduleConfig>(DEFAULT_NOTIFICATION_CONFIG);
   const [celebrationState, setCelebrationState] = useState<CelebrationState>({
     visible: false,
@@ -277,8 +285,9 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     subtitle: '',
   });
 
+  // Initial local cache load
   useEffect(() => {
-    async function loadData() {
+    async function loadLocalData() {
       try {
         const [savedHabits, savedChallenges, savedLogs, savedSettings, savedOnboarding] = await Promise.all([
           AsyncStorage.getItem(HABITS_STORAGE_KEY),
@@ -299,40 +308,146 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           setHabits(synced);
         }
 
-        if (savedChallenges) {
-          setChallenges(JSON.parse(savedChallenges));
-        }
-
-        if (savedLogs) {
-          setLogs(JSON.parse(savedLogs));
-        }
-
-        if (savedOnboarding !== null) {
-          setHasSeenOnboardingState(JSON.parse(savedOnboarding));
-        }
+        if (savedChallenges) setChallenges(JSON.parse(savedChallenges));
+        if (savedLogs) setLogs(JSON.parse(savedLogs));
+        if (savedOnboarding !== null) setHasSeenOnboardingState(JSON.parse(savedOnboarding));
 
         if (savedSettings) {
           const settings = JSON.parse(savedSettings);
           setSoundEnabledState(settings.soundEnabled ?? true);
           setHapticsEnabledState(settings.hapticsEnabled ?? true);
-          if (settings.notificationConfig) {
-            setNotificationConfig(settings.notificationConfig);
-          }
+          if (settings.notificationConfig) setNotificationConfig(settings.notificationConfig);
           setSensorySettings(settings.soundEnabled ?? true, settings.hapticsEnabled ?? true);
         }
       } catch (e) {
         console.error('Failed to load storage data', e);
       }
     }
-    loadData();
+    loadLocalData();
   }, []);
 
+  // Background Cloud Sync Trigger when user authenticates
+  useEffect(() => {
+    if (user && isSupabaseConfigured()) {
+      syncWithCloud(user.id);
+    } else {
+      setSyncStatus('guest');
+    }
+  }, [user]);
+
+  const syncWithCloud = async (userId: string) => {
+    setSyncStatus('syncing');
+    try {
+      // 1. Fetch remote habits
+      const { data: remoteHabits, error: habitErr } = await supabase
+        .from('habits')
+        .select('*')
+        .eq('user_id', userId);
+
+      if (!habitErr && remoteHabits && remoteHabits.length > 0) {
+        const formatted: Habit[] = remoteHabits.map((h: any) => ({
+          id: h.id,
+          title: h.title,
+          description: h.description || undefined,
+          category: h.category as HabitCategory,
+          type: h.type as any,
+          color: h.color,
+          icon: h.icon,
+          targetFrequency: h.target_frequency,
+          reminderTime: h.reminder_time || undefined,
+          targetValue: h.target_value || undefined,
+          currentValue: h.current_value || undefined,
+          unit: h.unit || undefined,
+          targetDurationMinutes: h.target_duration_minutes || undefined,
+          completedSeconds: h.completed_seconds || undefined,
+          streak: h.streak || 0,
+          bestStreak: h.best_streak || 0,
+          completedToday: !!h.completed_today,
+          history: h.history || {},
+          createdAt: h.created_at,
+        }));
+        setHabits(formatted);
+        await AsyncStorage.setItem(HABITS_STORAGE_KEY, JSON.stringify(formatted));
+      } else if (!habitErr && remoteHabits && remoteHabits.length === 0) {
+        // Push initial local habits to cloud
+        await pushLocalHabitsToCloud(userId, habits);
+      }
+
+      // 2. Fetch remote challenges
+      const { data: remoteChallenges } = await supabase
+        .from('challenges')
+        .select('*')
+        .eq('user_id', userId);
+
+      if (remoteChallenges && remoteChallenges.length > 0) {
+        const formattedCh: Challenge[] = remoteChallenges.map((c: any) => ({
+          id: c.id,
+          title: c.title,
+          tagline: c.tagline || '',
+          description: c.description,
+          durationDays: c.duration_days,
+          completedDays: c.completed_days,
+          targetHabitCategory: c.target_habit_category || undefined,
+          rewardBadge: c.reward_badge,
+          rewardColor: c.reward_color,
+          rewardIcon: c.reward_icon,
+          status: c.status,
+          isCustom: c.is_custom,
+          startDate: c.start_date || undefined,
+          claimedAt: c.claimed_at || undefined,
+        }));
+        setChallenges(formattedCh);
+        await AsyncStorage.setItem(CHALLENGES_STORAGE_KEY, JSON.stringify(formattedCh));
+      }
+
+      setSyncStatus('synced');
+    } catch (e) {
+      console.log('Background sync error', e);
+      setSyncStatus('offline');
+    }
+  };
+
+  const pushLocalHabitsToCloud = async (userId: string, habitsToPush: Habit[]) => {
+    try {
+      const rows = habitsToPush.map((h) => ({
+        id: h.id,
+        user_id: userId,
+        title: h.title,
+        description: h.description || null,
+        category: h.category,
+        type: h.type,
+        color: h.color,
+        icon: h.icon,
+        target_frequency: h.targetFrequency,
+        reminder_time: h.reminderTime || null,
+        target_value: h.targetValue || null,
+        current_value: h.currentValue || null,
+        unit: h.unit || null,
+        target_duration_minutes: h.targetDurationMinutes || null,
+        completed_seconds: h.completedSeconds || null,
+        streak: h.streak,
+        best_streak: h.bestStreak,
+        completed_today: h.completedToday,
+        history: h.history,
+        updated_at: new Date().toISOString(),
+      }));
+
+      await supabase.from('habits').upsert(rows, { onConflict: 'id' });
+    } catch (e) {
+      console.log('Push habits error', e);
+    }
+  };
+
   const saveHabits = async (newHabits: Habit[]) => {
+    // 1. Instant local update (<1ms)
     setHabits(newHabits);
     try {
       await AsyncStorage.setItem(HABITS_STORAGE_KEY, JSON.stringify(newHabits));
-    } catch (e) {
-      console.error('Failed to save habits', e);
+    } catch (e) {}
+
+    // 2. Background cloud sync
+    if (user && isSupabaseConfigured()) {
+      pushLocalHabitsToCloud(user.id, newHabits).catch(() => {});
     }
   };
 
@@ -340,8 +455,30 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setChallenges(newChallenges);
     try {
       await AsyncStorage.setItem(CHALLENGES_STORAGE_KEY, JSON.stringify(newChallenges));
-    } catch (e) {
-      console.error('Failed to save challenges', e);
+    } catch (e) {}
+
+    if (user && isSupabaseConfigured()) {
+      try {
+        const rows = newChallenges.map((c) => ({
+          id: c.id,
+          user_id: user.id,
+          title: c.title,
+          tagline: c.tagline,
+          description: c.description,
+          duration_days: c.durationDays,
+          completed_days: c.completedDays,
+          target_habit_category: c.targetHabitCategory || null,
+          reward_badge: c.rewardBadge,
+          reward_color: c.rewardColor,
+          reward_icon: c.rewardIcon,
+          status: c.status,
+          is_custom: !!c.isCustom,
+          start_date: c.startDate || null,
+          claimed_at: c.claimedAt || null,
+          updated_at: new Date().toISOString(),
+        }));
+        supabase.from('challenges').upsert(rows, { onConflict: 'id' }).then(() => {});
+      } catch (e) {}
     }
   };
 
@@ -349,8 +486,27 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setLogs(newLogs);
     try {
       await AsyncStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(newLogs));
-    } catch (e) {
-      console.error('Failed to save logs', e);
+    } catch (e) {}
+
+    if (user && isSupabaseConfigured()) {
+      try {
+        const rows = newLogs.map((l) => ({
+          id: l.id,
+          user_id: user.id,
+          habit_id: l.habitId,
+          habit_title: l.habitTitle,
+          habit_color: l.habitColor,
+          habit_icon: l.habitIcon,
+          category: l.category,
+          type: l.type,
+          action: l.action,
+          value_logged: l.valueLogged || null,
+          note: l.note || null,
+          timestamp: l.timestamp,
+          date: l.date,
+        }));
+        supabase.from('habit_logs').upsert(rows, { onConflict: 'id' }).then(() => {});
+      } catch (e) {}
     }
   };
 
@@ -360,8 +516,22 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         SETTINGS_STORAGE_KEY,
         JSON.stringify({ soundEnabled: sound, hapticsEnabled: haptics, notificationConfig: notif })
       );
-    } catch (e) {
-      console.error('Failed to save settings', e);
+    } catch (e) {}
+
+    if (user && isSupabaseConfigured()) {
+      supabase
+        .from('user_settings')
+        .upsert(
+          {
+            user_id: user.id,
+            sound_enabled: sound,
+            haptics_enabled: haptics,
+            notification_config: notif,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id' }
+        )
+        .then(() => {});
     }
   };
 
@@ -654,7 +824,6 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     playChimeSound('step');
   };
 
-  // --- Developer Testing Helper Functions ---
   const devSetChallengeDay = (challengeId: string, day: number) => {
     const updated = challenges.map((c) => {
       if (c.id !== challengeId) return c;
@@ -750,6 +919,9 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     cancelHabitReminder(id);
     const updated = habits.filter((h) => h.id !== id);
     saveHabits(updated);
+    if (user && isSupabaseConfigured()) {
+      supabase.from('habits').delete().eq('id', id).then(() => {});
+    }
     triggerHaptic('warning');
   };
 
@@ -772,6 +944,12 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     saveLogs(SEED_LOGS);
     triggerHaptic('medium');
     playChimeSound('step');
+  };
+
+  const syncNow = async () => {
+    if (user && isSupabaseConfigured()) {
+      await syncWithCloud(user.id);
+    }
   };
 
   // Stats calculation
@@ -800,7 +978,6 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     totalLogEntriesCount: logs.length,
   };
 
-  // Exact 7-day consistency story generator
   const generateConsistencyStory = () => {
     if (habits.length === 0) {
       return {
@@ -811,7 +988,6 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       };
     }
 
-    // Exact 7-day completion count across all habits
     let totalPossible = habits.length * 7;
     let totalDonePastWeek = 0;
     for (let i = 0; i < 7; i++) {
@@ -857,6 +1033,7 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         notificationConfig,
         celebrationState,
         hasSeenOnboarding,
+        syncStatus,
         setSelectedCategory,
         toggleHabit,
         incrementHabit,
@@ -879,6 +1056,7 @@ export const HabitProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         triggerCelebration,
         resetDemoData,
         setHasSeenOnboarding,
+        syncNow,
         generateConsistencyStory,
       }}>
       {children}

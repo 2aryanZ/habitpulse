@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Platform,
   SafeAreaView,
@@ -12,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '@/context/AuthContext';
 import { useHabits } from '@/context/HabitContext';
 import {
   requestNotificationPermissions,
@@ -19,21 +21,27 @@ import {
 } from '@/utils/notifications';
 import { DevTestModal } from '@/components/DevTestModal';
 import { OnboardingModal } from '@/components/OnboardingModal';
+import { AuthModal } from '@/components/AuthModal';
 
 export default function SettingsScreen() {
+  const { user, isGuest, signOut } = useAuth();
   const {
     soundEnabled,
     hapticsEnabled,
     notificationConfig,
+    syncStatus,
     setSoundEnabled,
     setHapticsEnabled,
     updateNotificationConfig,
     resetDemoData,
+    syncNow,
   } = useHabits();
 
   const [devModalVisible, setDevModalVisible] = useState(false);
   const [onboardingVisible, setOnboardingVisible] = useState(false);
+  const [authModalVisible, setAuthModalVisible] = useState(false);
   const [testSent, setTestSent] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const MORNING_TIMES = ['07:00', '07:30', '08:00', '08:30', '09:00'];
   const AFTERNOON_TIMES = ['12:00', '13:00', '14:00', '15:00', '16:00'];
@@ -65,6 +73,19 @@ export default function SettingsScreen() {
     setTimeout(() => setTestSent(false), 3000);
   };
 
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    await syncNow();
+    setTimeout(() => setIsSyncing(false), 800);
+  };
+
+  const handleSignOut = async () => {
+    Alert.alert('Sign Out', 'Are you sure you want to sign out of your cloud account?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign Out', style: 'destructive', onPress: signOut },
+    ]);
+  };
+
   const handleResetConfirm = () => {
     Alert.alert(
       'Reset Demo State',
@@ -83,12 +104,99 @@ export default function SettingsScreen() {
       {/* Header */}
       <View style={styles.topBar}>
         <View>
-          <Text style={styles.appTitle}>Settings & Controls ⚙️</Text>
-          <Text style={styles.appSubtitle}>Configure reminders, sensory feedback & dev tools</Text>
+          <Text style={styles.appTitle}>Settings & Cloud ⚙️</Text>
+          <Text style={styles.appSubtitle}>Configure sync, reminders, rewards & data</Text>
         </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        {/* User Account & Supabase Sync Card */}
+        <View style={styles.sectionCard}>
+          <View style={styles.accountHeaderRow}>
+            <View style={styles.accountIconBox}>
+              <Ionicons
+                name={user ? 'person-circle' : 'cloud-offline'}
+                size={26}
+                color={user ? '#4F46E5' : '#64748B'}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.accountTitle}>
+                {user ? user.email : 'Guest / Offline Mode'}
+              </Text>
+              <Text style={styles.accountSubtitle}>
+                {user
+                  ? 'Cloud backup active via Supabase'
+                  : 'Fast local storage. Sign in to backup your data.'}
+              </Text>
+            </View>
+
+            {/* Sync Badge */}
+            <View
+              style={[
+                styles.syncBadge,
+                syncStatus === 'synced'
+                  ? styles.syncBadgeGreen
+                  : syncStatus === 'syncing'
+                  ? styles.syncBadgeBlue
+                  : styles.syncBadgeGray,
+              ]}>
+              <Text
+                style={[
+                  styles.syncBadgeText,
+                  syncStatus === 'synced'
+                    ? styles.syncTextGreen
+                    : syncStatus === 'syncing'
+                    ? styles.syncTextBlue
+                    : styles.syncTextGray,
+                ]}>
+                {syncStatus === 'synced'
+                  ? '✓ Synced'
+                  : syncStatus === 'syncing'
+                  ? '☁️ Syncing'
+                  : 'Local Cache'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Account Action Buttons */}
+          <View style={styles.accountActionRow}>
+            {user ? (
+              <>
+                <TouchableOpacity
+                  style={styles.syncNowBtn}
+                  activeOpacity={0.7}
+                  disabled={isSyncing}
+                  onPress={handleManualSync}>
+                  {isSyncing ? (
+                    <ActivityIndicator size="small" color="#4338CA" />
+                  ) : (
+                    <>
+                      <Ionicons name="refresh" size={16} color="#4338CA" />
+                      <Text style={styles.syncNowBtnText}>Sync Now</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.signOutBtn}
+                  activeOpacity={0.7}
+                  onPress={handleSignOut}>
+                  <Text style={styles.signOutBtnText}>Sign Out</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <TouchableOpacity
+                style={styles.signInBtn}
+                activeOpacity={0.8}
+                onPress={() => setAuthModalVisible(true)}>
+                <Ionicons name="cloud-upload" size={18} color="#FFFFFF" />
+                <Text style={styles.signInBtnText}>Sign In / Backup to Cloud</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
         {/* Developer Testing Tools Highlight */}
         <View style={[styles.sectionCard, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
           <View style={styles.devBannerRow}>
@@ -125,7 +233,7 @@ export default function SettingsScreen() {
               </View>
               <View>
                 <Text style={styles.settingTitle}>Audio Chimes</Text>
-                <Text style={styles.settingDesc}>Harmonic tones on habit completions and fanfares</Text>
+                <Text style={styles.settingDesc}>Harmonic tones on completions and fanfares</Text>
               </View>
             </View>
             <Switch
@@ -315,16 +423,13 @@ export default function SettingsScreen() {
       </ScrollView>
 
       {/* Dev Test Modal */}
-      <DevTestModal
-        visible={devModalVisible}
-        onClose={() => setDevModalVisible(false)}
-      />
+      <DevTestModal visible={devModalVisible} onClose={() => setDevModalVisible(false)} />
 
       {/* Onboarding Guide Modal */}
-      <OnboardingModal
-        visible={onboardingVisible}
-        onFinish={() => setOnboardingVisible(false)}
-      />
+      <OnboardingModal visible={onboardingVisible} onFinish={() => setOnboardingVisible(false)} />
+
+      {/* Auth Modal */}
+      <AuthModal visible={authModalVisible} onClose={() => setAuthModalVisible(false)} />
     </SafeAreaView>
   );
 }
@@ -363,6 +468,107 @@ const styles = StyleSheet.create({
     marginVertical: 8,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+  },
+  accountHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  accountIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  accountTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  accountSubtitle: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  syncBadge: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+  },
+  syncBadgeGreen: {
+    backgroundColor: '#ECFDF5',
+  },
+  syncBadgeBlue: {
+    backgroundColor: '#EEF2FF',
+  },
+  syncBadgeGray: {
+    backgroundColor: '#F1F5F9',
+  },
+  syncBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  syncTextGreen: {
+    color: '#059669',
+  },
+  syncTextBlue: {
+    color: '#4F46E5',
+  },
+  syncTextGray: {
+    color: '#64748B',
+  },
+  accountActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  signInBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#4F46E5',
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  signInBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  syncNowBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#EEF2FF',
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#C7D2FE',
+  },
+  syncNowBtnText: {
+    color: '#4338CA',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  signOutBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  signOutBtnText: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '700',
   },
   devBannerRow: {
     flexDirection: 'row',

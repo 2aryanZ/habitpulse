@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '@/context/AuthContext';
 import { useHabits } from '@/context/HabitContext';
 import { DailySummaryCard } from '@/components/DailySummaryCard';
 import { CategoryFilter } from '@/components/CategoryFilter';
@@ -18,14 +19,16 @@ import { AddHabitModal } from '@/components/AddHabitModal';
 import { ConfettiCelebration } from '@/components/ConfettiCelebration';
 import { DevTestModal } from '@/components/DevTestModal';
 import { OnboardingModal } from '@/components/OnboardingModal';
+import { AuthModal } from '@/components/AuthModal';
 import { BottomTabInset } from '@/constants/theme';
 
 export default function HabitsScreen() {
+  const { user } = useAuth();
   const {
     habits,
     selectedCategory,
     celebrationState,
-    hasSeenOnboarding,
+    syncStatus,
     setHasSeenOnboarding,
     dismissCelebration,
     resetDemoData,
@@ -34,6 +37,7 @@ export default function HabitsScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [devModalVisible, setDevModalVisible] = useState(false);
   const [onboardingVisible, setOnboardingVisible] = useState(false);
+  const [authModalVisible, setAuthModalVisible] = useState(false);
 
   const filteredHabits = habits.filter((habit) => {
     if (selectedCategory === 'all') return true;
@@ -47,7 +51,29 @@ export default function HabitsScreen() {
       {/* Top Navbar */}
       <View style={styles.topBar}>
         <View>
-          <Text style={styles.appTitle}>HabitPulse ✨</Text>
+          <View style={styles.titleRow}>
+            <Text style={styles.appTitle}>HabitPulse ✨</Text>
+            {/* Cloud Sync Status Indicator */}
+            <TouchableOpacity
+              style={[
+                styles.syncPill,
+                syncStatus === 'synced' && styles.syncPillGreen,
+              ]}
+              onPress={() => setAuthModalVisible(true)}>
+              <Ionicons
+                name={user ? (syncStatus === 'synced' ? 'cloud-done' : 'cloud-upload') : 'cloud-offline'}
+                size={13}
+                color={user ? (syncStatus === 'synced' ? '#059669' : '#4F46E5') : '#64748B'}
+              />
+              <Text
+                style={[
+                  styles.syncPillText,
+                  syncStatus === 'synced' && styles.syncPillTextGreen,
+                ]}>
+                {user ? (syncStatus === 'synced' ? 'Cloud Synced' : 'Syncing') : 'Offline Cache'}
+              </Text>
+            </TouchableOpacity>
+          </View>
           <Text style={styles.appSubtitle}>Build consistency daily</Text>
         </View>
 
@@ -57,7 +83,7 @@ export default function HabitsScreen() {
             activeOpacity={0.7}
             onPress={() => setDevModalVisible(true)}>
             <Ionicons name="construct-outline" size={15} color="#DC2626" />
-            <Text style={styles.devBtnText}>Dev Tools</Text>
+            <Text style={styles.devBtnText}>Dev</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -130,6 +156,9 @@ export default function HabitsScreen() {
         }}
       />
 
+      {/* Auth Modal */}
+      <AuthModal visible={authModalVisible} onClose={() => setAuthModalVisible(false)} />
+
       {/* Confetti Celebration Overlay */}
       <ConfettiCelebration
         visible={celebrationState.visible}
@@ -156,11 +185,36 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     backgroundColor: '#F8FAFC',
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   appTitle: {
     fontSize: 22,
     fontWeight: '800',
     color: '#0F172A',
     letterSpacing: -0.5,
+  },
+  syncPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F1F5F9',
+    paddingVertical: 3,
+    paddingHorizontal: 6,
+    borderRadius: 8,
+  },
+  syncPillGreen: {
+    backgroundColor: '#ECFDF5',
+  },
+  syncPillText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  syncPillTextGreen: {
+    color: '#059669',
   },
   appSubtitle: {
     fontSize: 12,
