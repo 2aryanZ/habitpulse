@@ -1,18 +1,83 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
+import React from 'react';
+import { Tabs } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { HabitProvider } from '@/context/HabitContext';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
-
-SplashScreen.preventAutoHideAsync();
-
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+export default function RootLayout() {
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
+    <HabitProvider>
+      <Tabs
+        screenOptions={{
+          headerShown: false,
+          tabBarActiveTintColor: '#4F46E5',
+          tabBarInactiveTintColor: '#94A3B8',
+          tabBarStyle: {
+            backgroundColor: '#FFFFFF',
+            borderTopColor: '#F1F5F9',
+            height: 62,
+            paddingBottom: 8,
+            paddingTop: 6,
+          },
+          tabBarLabelStyle: {
+            fontSize: 11,
+            fontWeight: '600',
+          },
+        }}>
+        {/* Screen 1: Habits */}
+        <Tabs.Screen
+          name="index"
+          options={{
+            title: 'Habits',
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="checkbox" size={size ?? 22} color={color} />
+            ),
+          }}
+        />
+
+        {/* Screen 2: Challenges */}
+        <Tabs.Screen
+          name="challenges"
+          options={{
+            title: 'Challenges',
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="trophy" size={size ?? 22} color={color} />
+            ),
+          }}
+        />
+
+        {/* Screen 3: Accountability Log */}
+        <Tabs.Screen
+          name="journal"
+          options={{
+            title: 'Log',
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="journal" size={size ?? 22} color={color} />
+            ),
+          }}
+        />
+
+        {/* Screen 4: Analytics */}
+        <Tabs.Screen
+          name="explore"
+          options={{
+            title: 'Insights',
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="stats-chart" size={size ?? 22} color={color} />
+            ),
+          }}
+        />
+
+        {/* Screen 5: Settings & Retention */}
+        <Tabs.Screen
+          name="settings"
+          options={{
+            title: 'Settings',
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="settings-sharp" size={size ?? 22} color={color} />
+            ),
+          }}
+        />
+      </Tabs>
+    </HabitProvider>
   );
 }

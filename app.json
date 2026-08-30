@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "temp_expo_app",
-    "slug": "temp_expo_app",
+    "name": "mobile-app",
+    "slug": "mobile-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "tempexpoapp",
+    "scheme": "mobileapp",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
