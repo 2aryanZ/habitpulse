@@ -13,6 +13,7 @@ interface AuthContextType {
   isConfigured: boolean;
   signInWithEmail: (email: string, pass: string) => Promise<{ error: Error | null }>;
   signUpWithEmail: (email: string, pass: string) => Promise<{ error: Error | null; user: User | null }>;
+  resetPassword: (email: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   continueAsGuest: () => Promise<void>;
 }
@@ -72,7 +73,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithEmail = async (email: string, pass: string) => {
     if (!isConfigured) {
-      return { error: new Error('Supabase is not configured yet with URL & Anon Key.') };
+      return {
+        error: new Error(
+          'Supabase credentials missing. Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to your .env file.'
+        ),
+      };
     }
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -95,7 +100,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signUpWithEmail = async (email: string, pass: string) => {
     if (!isConfigured) {
       return {
-        error: new Error('Supabase is not configured yet with URL & Anon Key.'),
+        error: new Error(
+          'Supabase credentials missing. Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to your .env file.'
+        ),
         user: null,
       };
     }
@@ -116,6 +123,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { error: null, user: data.user };
     } catch (err: any) {
       return { error: err, user: null };
+    }
+  };
+
+  const resetPassword = async (email: string) => {
+    if (!isConfigured) {
+      return {
+        error: new Error('Supabase credentials missing in .env file.'),
+      };
+    }
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+      return { error };
+    } catch (err: any) {
+      return { error: err };
     }
   };
 
@@ -144,6 +165,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isConfigured,
         signInWithEmail,
         signUpWithEmail,
+        resetPassword,
         signOut,
         continueAsGuest,
       }}>
